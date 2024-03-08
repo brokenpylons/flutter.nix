@@ -41,6 +41,7 @@
 , clang
 , lndir
 , symlinkJoin
+, dart
 }:
 
 let
@@ -66,11 +67,35 @@ let
     passthru.flutterPlatform = flutterPlatformArtifacts;
   };
 
+  rootDir = stdenv.mkDerivation {
+    name = "flutter-root";
+    inherit (flutter) version;
+    dontUnpack = true;
+
+    nativeBuildInputs = [ makeWrapper ];
+
+    installPhase = ''
+      runHook preInstall
+
+      cp -r ${flutter} $out
+      chmod +w $out/bin/cache
+      rm -rf $out/bin/cache/dart-sdk
+      cp -rLn ${cacheDir}/bin/cache/* $out/bin/cache
+      chmod -w $out/bin/cache
+
+      chmod +w $out/bin
+      wrapProgram "$out/bin/flutter" --set-default FLUTTER_ROOT "$out"
+      chmod -w $out/bin
+
+      runHook postInstall
+    '';
+  };
+
   # By default, Flutter stores downloaded files (such as the Pub cache) in the SDK directory.
   # Wrap it to ensure that it does not do that, preferring home directories instead.
   immutableFlutter = writeShellScript "flutter_immutable" ''
     export PUB_CACHE=''${PUB_CACHE:-"$HOME/.pub-cache"}
-    ${flutter}/bin/flutter "$@"
+    ${rootDir}/bin/flutter "$@"
   '';
 
   # Tools that the Flutter tool depends on.
@@ -116,7 +141,7 @@ let
   includeFlags = map (pkg: "-isystem ${lib.getOutput "dev" pkg}/include") (appStaticBuildDeps ++ extraIncludes);
   linkerFlags = (map (pkg: "-rpath,${lib.getOutput "lib" pkg}/lib") appRuntimeDeps) ++ extraLinkerFlags;
 in
-(callPackage ./sdk-symlink.nix { }) (stdenv.mkDerivation
+(stdenv.mkDerivation
 {
   pname = "flutter-wrapped";
   inherit (flutter) version;
@@ -143,7 +168,7 @@ in
     done
 
     mkdir -p $out/bin
-    makeWrapper '${immutableFlutter}' $out/bin/flutter \
+    makeShellWrapper '${immutableFlutter}' $out/bin/flutter \
       --set-default ANDROID_EMULATOR_USE_SYSTEM_LIBS 1 \
       --suffix PATH : '${lib.makeBinPath (tools ++ buildTools)}' \
       --suffix PKG_CONFIG_PATH : "$FLUTTER_PKG_CONFIG_PATH" \
